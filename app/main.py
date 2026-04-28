@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, HttpUrl
 
 from app.scraper import scrape_url
-from app.searcher import search_web, search_pastes
+from app.searcher import search_web, search_pastes, deep_search
 
 app = FastAPI(title="Web Scraper")
 
@@ -20,6 +20,12 @@ class SearchScrapeRequest(BaseModel):
 class PasteSearchRequest(BaseModel):
     query: str
     num_results: int = 10
+
+
+class DeepSearchRequest(BaseModel):
+    query: str
+    num_results: int = 5
+    max_depth_links: int = 3
 
 
 @app.post("/api/scrape")
@@ -74,6 +80,11 @@ async def api_paste_search(req: PasteSearchRequest):
                 "error": str(e),
             })
     return {"query": req.query, "results": scraped}
+
+
+@app.post("/api/deep-search")
+async def api_deep_search(req: DeepSearchRequest):
+    return await deep_search(req.query, req.num_results, req.max_depth_links)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -152,6 +163,7 @@ HTML_PAGE = """\
   <div class="mode-toggle">
     <div class="mode-btn active" onclick="setMode('search')" id="mode-search">Search &amp; Scrape</div>
     <div class="mode-btn" onclick="setMode('paste')" id="mode-paste">Cool Mode &#128526;</div>
+    <div class="mode-btn" onclick="setMode('deep')" id="mode-deep">Deep Search &#128373;</div>
     <div class="mode-btn" onclick="setMode('url')" id="mode-url">Scrape URL</div>
   </div>
 
@@ -173,6 +185,7 @@ function setMode(mode) {
   currentMode = mode;
   document.getElementById('mode-search').classList.toggle('active', mode === 'search');
   document.getElementById('mode-paste').classList.toggle('active', mode === 'paste');
+  document.getElementById('mode-deep').classList.toggle('active', mode === 'deep');
   document.getElementById('mode-url').classList.toggle('active', mode === 'url');
   const input = document.getElementById('mainInput');
   const btn = document.getElementById('goBtn');
@@ -184,6 +197,10 @@ function setMode(mode) {
     input.type = 'text';
     input.placeholder = 'Keywords to search pastes, Telegram, Discord...';
     btn.textContent = 'Search Everything';
+  } else if (mode === 'deep') {
+    input.type = 'text';
+    input.placeholder = 'Deep search — follows links to dig deeper...';
+    btn.textContent = 'Deep Search';
   } else {
     input.type = 'url';
     input.placeholder = 'https://example.com';
@@ -198,6 +215,7 @@ async function doAction() {
   if (!val) return;
   if (currentMode === 'url') return doScrapeUrl(val);
   if (currentMode === 'paste') return doPasteSearch(val);
+  if (currentMode === 'deep') return doDeepSearch(val);
   return doSearchScrape(val);
 }
 
@@ -260,6 +278,85 @@ async function doScrapeUrl(url) {
     switchTab('single', 'metadata');
   } catch (e) { error.textContent = 'Error: ' + e.message; }
   finally { btn.disabled = false; spinner.style.display = 'none'; }
+}
+
+async function doDeepSearch(query) {
+  const btn = document.getElementById('goBtn');
+  const spinner = document.getElementById('spinner');
+  const error = document.getElementById('error');
+  const results = document.getElementById('results');
+  btn.disabled = true; spinner.style.display = 'block'; error.textContent = ''; results.style.display = 'none';
+  spinner.innerHTML = 'Deep searching... scraping pages and following links \u26a1';
+  try {
+    const res = await fetch(BASE + '/api/deep-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, num_results: 5, max_depth_links: 3 })
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+    const data = await res.json();
+    renderDeepResults(data);
+    results.style.display = 'block';
+  } catch (e) { error.textContent = 'Error: ' + e.message; }
+  finally { btn.disabled = false; spinner.style.display = 'none'; spinner.innerHTML = 'Working...'; }
+}
+
+function renderDeepResults(data) {
+  const el = document.getElementById('results');
+  const st = data.stats;
+  let h = '<div style="background:#1e293b;padding:.75rem 1rem;border-radius:.5rem;margin-bottom:1rem;font-size:.85rem;display:flex;gap:1.5rem;flex-wrap:wrap">';
+  h += '<span style="color:var(--accent)">&#128269; Searched: <b>' + st.pages_searched + '</b> pages</span>';
+  h += '<span style="color:var(--green)">&#128196; Scraped: <b>' + st.pages_scraped + '</b></span>';
+  h += '<span style="color:#c084fc">&#128279; Links followed: <b>' + st.links_followed + '</b></span>';
+  h += '<span style="color:var(--muted)">Total links found: ' + st.total_links_found + '</span>';
+  h += '</div>';
+
+  if (data.results.length) {
+    h += '<div style="font-size:.8rem;color:var(--accent);margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em">Depth 0 — Direct Results</div>';
+    h += '<div class="sr-list">';
+    data.results.forEach((r, i) => {
+      h += buildDeepCard(r, i, false);
+    });
+    h += '</div>';
+  }
+
+  if (data.deep_results && data.deep_results.length) {
+    h += '<div style="font-size:.8rem;color:#c084fc;margin:.75rem 0 .5rem;text-transform:uppercase;letter-spacing:.05em">Depth 1 \u2014 Followed Links &#128279;</div>';
+    h += '<div class="sr-list">';
+    data.deep_results.forEach((r, i) => {
+      h += buildDeepCard(r, 'd' + i, true);
+    });
+    h += '</div>';
+  }
+
+  if (!data.results.length && (!data.deep_results || !data.deep_results.length)) {
+    h += '<div style="text-align:center;color:var(--muted);padding:2rem;">No results found.</div>';
+  }
+
+  el.innerHTML = h;
+}
+
+function buildDeepCard(r, idx, isDeep) {
+  const sr = r.search_result;
+  const hasError = !!r.error;
+  const borderColor = isDeep ? '#c084fc' : 'var(--accent)';
+  let c = '<div class="sr-card' + (hasError ? ' has-error' : '') + '" onclick="toggleDetail(\\'' + idx + '\\')" style="border-left-color:' + borderColor + '">';
+  c += '<div style="display:flex;justify-content:space-between;align-items:center"><div class="sr-title">' + escHtml(sr.title) + '</div>';
+  if (isDeep) c += '<span style="font-size:.7rem;background:#334155;padding:.2rem .5rem;border-radius:.25rem;color:#c084fc">depth 1</span>';
+  c += '</div>';
+  c += '<div class="sr-url"><a href="'+escAttr(sr.url)+'" target="_blank" onclick="event.stopPropagation()" style="color:var(--accent)">' + escHtml(sr.url) + '</a></div>';
+  if (sr.snippet) c += '<div class="sr-snippet">' + escHtml(sr.snippet) + '</div>';
+  if (hasError) {
+    c += '<div class="sr-status fail">Failed to scrape: ' + escHtml(r.error) + '</div>';
+  } else if (r.scrape) {
+    const s = r.scrape;
+    c += '<div class="sr-status ok">Scraped: ' + s.text.length + ' text blocks, ' + s.links.length + ' links, ' + s.images.length + ' images</div>';
+  }
+  if (r.scrape) {
+    c += '<div class="detail" id="detail-' + idx + '">' + buildScrapeDetail(r.scrape, 'r' + idx) + '</div>';
+  }
+  c += '</div>';
+  return c;
 }
 
 const SOURCE_COLORS = {
