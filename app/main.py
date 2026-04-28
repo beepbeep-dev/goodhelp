@@ -140,6 +140,7 @@ HTML_PAGE = """\
 
 <script>
 let currentMode = 'search';
+const BASE = window.location.origin;
 
 function setMode(mode) {
   currentMode = mode;
@@ -174,7 +175,7 @@ async function doSearchScrape(query) {
   const results = document.getElementById('results');
   btn.disabled = true; spinner.style.display = 'block'; error.textContent = ''; results.style.display = 'none';
   try {
-    const res = await fetch('/api/search-and-scrape', {
+    const res = await fetch(BASE + '/api/search-and-scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, num_results: 5 })
@@ -194,7 +195,7 @@ async function doScrapeUrl(url) {
   const results = document.getElementById('results');
   btn.disabled = true; spinner.style.display = 'block'; error.textContent = ''; results.style.display = 'none';
   try {
-    const res = await fetch('/api/scrape', {
+    const res = await fetch(BASE + '/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
