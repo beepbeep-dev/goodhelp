@@ -151,7 +151,7 @@ HTML_PAGE = """\
 
   <div class="mode-toggle">
     <div class="mode-btn active" onclick="setMode('search')" id="mode-search">Search &amp; Scrape</div>
-    <div class="mode-btn" onclick="setMode('paste')" id="mode-paste">Paste Search</div>
+    <div class="mode-btn" onclick="setMode('paste')" id="mode-paste">Cool Mode &#128526;</div>
     <div class="mode-btn" onclick="setMode('url')" id="mode-url">Scrape URL</div>
   </div>
 
@@ -182,8 +182,8 @@ function setMode(mode) {
     btn.textContent = 'Search & Scrape';
   } else if (mode === 'paste') {
     input.type = 'text';
-    input.placeholder = 'Keywords to search in pastes...';
-    btn.textContent = 'Search Pastes';
+    input.placeholder = 'Keywords to search pastes, Telegram, Discord...';
+    btn.textContent = 'Search Everything';
   } else {
     input.type = 'url';
     input.placeholder = 'https://example.com';
@@ -262,19 +262,29 @@ async function doScrapeUrl(url) {
   finally { btn.disabled = false; spinner.style.display = 'none'; }
 }
 
+const SOURCE_COLORS = {
+  telegram: '#26A5E4',
+  discord: '#5865F2',
+};
+
+function badgeColor(source) {
+  return SOURCE_COLORS[source] || '#a78bfa';
+}
+
 function renderPasteResults(data) {
   const el = document.getElementById('results');
   if (!data.results.length) {
-    el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem;">No pastes found for that query. Try different keywords.</div>';
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem;">No results found for that query. Try different keywords.</div>';
     return;
   }
   let h = '<div class="sr-list">';
   data.results.forEach((r, i) => {
     const sr = r.search_result;
     const hasError = !!r.error;
-    h += '<div class="sr-card' + (hasError ? ' has-error' : '') + '" onclick="toggleDetail(' + i + ')" style="border-left-color:#a78bfa">';
+    const bc = badgeColor(sr.source);
+    h += '<div class="sr-card' + (hasError ? ' has-error' : '') + '" onclick="toggleDetail(' + i + ')" style="border-left-color:' + bc + '">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center"><div class="sr-title">' + escHtml(sr.title) + '</div>';
-    h += '<span style="font-size:.7rem;background:#334155;padding:.2rem .5rem;border-radius:.25rem;color:#a78bfa">' + escHtml(sr.source) + '</span></div>';
+    h += '<span style="font-size:.7rem;background:#334155;padding:.2rem .5rem;border-radius:.25rem;color:' + bc + '">' + escHtml(sr.source) + '</span></div>';
     h += '<div class="sr-url"><a href="'+escAttr(sr.url)+'" target="_blank" onclick="event.stopPropagation()" style="color:var(--accent)">' + escHtml(sr.url) + '</a></div>';
     if (sr.snippet) h += '<div class="sr-snippet">' + escHtml(sr.snippet) + '</div>';
     if (hasError) {

@@ -11,6 +11,10 @@ PASTE_SITES = [
     "ideone.com",
     "paste.centos.org",
     "bpa.st",
+    "t.me",
+    "telegram.me",
+    "discord.com",
+    "discord.gg",
 ]
 
 
@@ -31,13 +35,20 @@ async def search_pastes(query: str, num_results: int = 10) -> list[dict]:
     site_filter = " OR ".join(f"site:{s}" for s in PASTE_SITES)
     full_query = f"{query} ({site_filter})"
 
+    SOURCE_LABELS = {
+        "t.me": "telegram",
+        "telegram.me": "telegram",
+        "discord.com": "discord",
+        "discord.gg": "discord",
+    }
+
     results = []
     for r in DDGS().text(full_query, max_results=num_results):
         url = r.get("href", "")
         source = "unknown"
         for site in PASTE_SITES:
             if site in url:
-                source = site
+                source = SOURCE_LABELS.get(site, site)
                 break
         results.append({
             "title": r.get("title", ""),
