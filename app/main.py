@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, HttpUrl
 
 from app.scraper import scrape_url
-from app.searcher import search_web
+from app.searcher import search_web, search_pastes
 
 app = FastAPI(title="Web Scraper")
 
@@ -15,6 +15,11 @@ class ScrapeRequest(BaseModel):
 class SearchScrapeRequest(BaseModel):
     query: str
     num_results: int = 5
+
+
+class PasteSearchRequest(BaseModel):
+    query: str
+    num_results: int = 10
 
 
 @app.post("/api/scrape")
@@ -32,6 +37,27 @@ async def api_search(req: SearchScrapeRequest):
 @app.post("/api/search-and-scrape")
 async def api_search_and_scrape(req: SearchScrapeRequest):
     search_results = await search_web(req.query, req.num_results)
+    scraped = []
+    for sr in search_results:
+        try:
+            data = await scrape_url(sr["url"])
+            scraped.append({
+                "search_result": sr,
+                "scrape": data,
+                "error": None,
+            })
+        except Exception as e:
+            scraped.append({
+                "search_result": sr,
+                "scrape": None,
+                "error": str(e),
+            })
+    return {"query": req.query, "results": scraped}
+
+
+@app.post("/api/paste-search")
+async def api_paste_search(req: PasteSearchRequest):
+    search_results = await search_pastes(req.query, req.num_results)
     scraped = []
     for sr in search_results:
         try:
@@ -125,6 +151,7 @@ HTML_PAGE = """\
 
   <div class="mode-toggle">
     <div class="mode-btn active" onclick="setMode('search')" id="mode-search">Search &amp; Scrape</div>
+    <div class="mode-btn" onclick="setMode('paste')" id="mode-paste">Paste Search</div>
     <div class="mode-btn" onclick="setMode('url')" id="mode-url">Scrape URL</div>
   </div>
 
@@ -145,6 +172,7 @@ const BASE = window.location.origin;
 function setMode(mode) {
   currentMode = mode;
   document.getElementById('mode-search').classList.toggle('active', mode === 'search');
+  document.getElementById('mode-paste').classList.toggle('active', mode === 'paste');
   document.getElementById('mode-url').classList.toggle('active', mode === 'url');
   const input = document.getElementById('mainInput');
   const btn = document.getElementById('goBtn');
@@ -152,6 +180,10 @@ function setMode(mode) {
     input.type = 'text';
     input.placeholder = 'What are you looking for?';
     btn.textContent = 'Search & Scrape';
+  } else if (mode === 'paste') {
+    input.type = 'text';
+    input.placeholder = 'Keywords to search in pastes...';
+    btn.textContent = 'Search Pastes';
   } else {
     input.type = 'url';
     input.placeholder = 'https://example.com';
@@ -165,7 +197,28 @@ async function doAction() {
   const val = document.getElementById('mainInput').value.trim();
   if (!val) return;
   if (currentMode === 'url') return doScrapeUrl(val);
+  if (currentMode === 'paste') return doPasteSearch(val);
   return doSearchScrape(val);
+}
+
+async function doPasteSearch(query) {
+  const btn = document.getElementById('goBtn');
+  const spinner = document.getElementById('spinner');
+  const error = document.getElementById('error');
+  const results = document.getElementById('results');
+  btn.disabled = true; spinner.style.display = 'block'; error.textContent = ''; results.style.display = 'none';
+  try {
+    const res = await fetch(BASE + '/api/paste-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, num_results: 10 })
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+    const data = await res.json();
+    renderPasteResults(data);
+    results.style.display = 'block';
+  } catch (e) { error.textContent = 'Error: ' + e.message; }
+  finally { btn.disabled = false; spinner.style.display = 'none'; }
 }
 
 async function doSearchScrape(query) {
@@ -207,6 +260,36 @@ async function doScrapeUrl(url) {
     switchTab('single', 'metadata');
   } catch (e) { error.textContent = 'Error: ' + e.message; }
   finally { btn.disabled = false; spinner.style.display = 'none'; }
+}
+
+function renderPasteResults(data) {
+  const el = document.getElementById('results');
+  if (!data.results.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem;">No pastes found for that query. Try different keywords.</div>';
+    return;
+  }
+  let h = '<div class="sr-list">';
+  data.results.forEach((r, i) => {
+    const sr = r.search_result;
+    const hasError = !!r.error;
+    h += '<div class="sr-card' + (hasError ? ' has-error' : '') + '" onclick="toggleDetail(' + i + ')" style="border-left-color:#a78bfa">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center"><div class="sr-title">' + escHtml(sr.title) + '</div>';
+    h += '<span style="font-size:.7rem;background:#334155;padding:.2rem .5rem;border-radius:.25rem;color:#a78bfa">' + escHtml(sr.source) + '</span></div>';
+    h += '<div class="sr-url"><a href="'+escAttr(sr.url)+'" target="_blank" onclick="event.stopPropagation()" style="color:var(--accent)">' + escHtml(sr.url) + '</a></div>';
+    if (sr.snippet) h += '<div class="sr-snippet">' + escHtml(sr.snippet) + '</div>';
+    if (hasError) {
+      h += '<div class="sr-status fail">Could not scrape content: ' + escHtml(r.error) + '</div>';
+    } else if (r.scrape) {
+      const s = r.scrape;
+      h += '<div class="sr-status ok">Content scraped: ' + s.text.length + ' text blocks</div>';
+    }
+    if (r.scrape) {
+      h += '<div class="detail" id="detail-' + i + '">' + buildScrapeDetail(r.scrape, 'r' + i) + '</div>';
+    }
+    h += '</div>';
+  });
+  h += '</div>';
+  el.innerHTML = h;
 }
 
 function renderSearchResults(data) {
