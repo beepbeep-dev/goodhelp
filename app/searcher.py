@@ -32,32 +32,75 @@ async def search_web(query: str, num_results: int = 5) -> list[dict]:
     return results
 
 
-async def search_pastes(query: str, num_results: int = 10) -> list[dict]:
-    """Search paste sites via DuckDuckGo for pastes matching keywords."""
-    site_filter = " OR ".join(f"site:{s}" for s in PASTE_SITES)
-    full_query = f"{query} ({site_filter})"
+DISCORD_SITES = ["discord.com", "discord.gg"]
+TELEGRAM_SITES = ["t.me", "telegram.me"]
+PURE_PASTE_SITES = [s for s in PASTE_SITES if s not in DISCORD_SITES + TELEGRAM_SITES]
 
-    SOURCE_LABELS = {
-        "t.me": "telegram",
-        "telegram.me": "telegram",
-        "discord.com": "discord",
-        "discord.gg": "discord",
+SOURCE_LABELS = {
+    "t.me": "telegram",
+    "telegram.me": "telegram",
+    "discord.com": "discord",
+    "discord.gg": "discord",
+}
+
+
+def _label_result(r: dict) -> dict:
+    url = r.get("href", "")
+    source = "unknown"
+    for site in PASTE_SITES:
+        if site in url:
+            source = SOURCE_LABELS.get(site, site)
+            break
+    return {
+        "title": r.get("title", ""),
+        "url": url,
+        "snippet": r.get("body", ""),
+        "source": source,
     }
 
-    results = []
-    for r in DDGS().text(full_query, max_results=num_results):
-        url = r.get("href", "")
-        source = "unknown"
-        for site in PASTE_SITES:
-            if site in url:
-                source = SOURCE_LABELS.get(site, site)
-                break
-        results.append({
-            "title": r.get("title", ""),
-            "url": url,
-            "snippet": r.get("body", ""),
-            "source": source,
-        })
+
+async def search_pastes(query: str, num_results: int = 10) -> list[dict]:
+    """Search paste sites, Discord, and Telegram separately for better coverage."""
+    ddg = DDGS()
+    seen_urls: set[str] = set()
+    results: list[dict] = []
+
+    def _add_results(raw: list[dict]) -> None:
+        for r in raw:
+            labeled = _label_result(r)
+            if labeled["url"] not in seen_urls:
+                seen_urls.add(labeled["url"])
+                results.append(labeled)
+
+    discord_filter = " OR ".join(f"site:{s}" for s in DISCORD_SITES)
+    discord_query = f"{query} ({discord_filter})"
+    try:
+        _add_results(ddg.text(discord_query, max_results=num_results, timelimit="m"))
+    except Exception:
+        pass
+
+    telegram_filter = " OR ".join(f"site:{s}" for s in TELEGRAM_SITES)
+    telegram_query = f"{query} ({telegram_filter})"
+    try:
+        _add_results(ddg.text(telegram_query, max_results=num_results, timelimit="m"))
+    except Exception:
+        pass
+
+    paste_filter = " OR ".join(f"site:{s}" for s in PURE_PASTE_SITES)
+    paste_query = f"{query} ({paste_filter})"
+    try:
+        _add_results(ddg.text(paste_query, max_results=num_results, timelimit="m"))
+    except Exception:
+        pass
+
+    if len(results) < num_results:
+        all_filter = " OR ".join(f"site:{s}" for s in PASTE_SITES)
+        fallback_query = f"{query} ({all_filter})"
+        try:
+            _add_results(ddg.text(fallback_query, max_results=num_results))
+        except Exception:
+            pass
+
     return results
 
 
