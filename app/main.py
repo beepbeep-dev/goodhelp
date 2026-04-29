@@ -513,7 +513,11 @@ async function apiCall(endpoint, body) {
   });
   if (!res.ok) {
     let msg = res.statusText;
-    try { const e = await res.json(); msg = e.detail || e.error || msg; } catch {}
+    try {
+      const e = await res.json();
+      if (Array.isArray(e.detail)) msg = e.detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+      else msg = e.detail || e.error || msg;
+    } catch {}
     throw new Error(msg);
   }
   return res.json();
